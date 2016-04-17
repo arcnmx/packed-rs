@@ -11,4 +11,4 @@ keywords = ["nue", "packed", "data", "unaligned", "aligned"]
 license = "MIT"
 
 [features]
-unstable = []
+oibit = []

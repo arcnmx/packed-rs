@@ -1,14 +1,13 @@
 #![deny(missing_docs)]
-#![cfg_attr(feature = "unstable", feature(optin_builtin_traits))]
+#![cfg_attr(feature = "oibit", feature(optin_builtin_traits))]
 
 //! A safe approach to using `#[repr(packed)]` data.
 //!
 //! See `nue_macros` for the automagic `#[packed]` attribute.
 
-use std::mem::{transmute, replace, uninitialized, forget};
+use std::mem::{transmute, uninitialized, forget, align_of};
+use std::ptr::write;
 use std::marker::PhantomData;
-
-use std::mem::align_of;
 
 /// A marker trait indicating that a type has an alignment of `1`.
 ///
@@ -19,7 +18,7 @@ pub unsafe trait Unaligned { }
 /// A type alias that represents the unaligned type of `T`.
 pub type Un<T> = <T as Aligned>::Unaligned;
 
-/// A marker trait indicating that a type has an alignment over `1`,
+/// A marker trait indicating that a type has an alignment greater than `1`,
 /// and is therefore not safe to use in an unaligned context.
 pub unsafe trait Aligned: Sized {
     /// An unaligned representation of this type. Usually a u8 array of the
@@ -28,8 +27,8 @@ pub unsafe trait Aligned: Sized {
 
     /// Determines whether an unaligned representation of this type is aligned.
     #[inline]
-    fn is_aligned(u: &Self::Unaligned) -> bool {
-        u as *const _ as usize % align_of::<Self>() == 0
+    fn is_aligned(unaligned: &Self::Unaligned) -> bool {
+        unaligned as *const _ as usize % align_of::<Self>() == 0
     }
 
     /// Borrows the value as unaligned.
@@ -46,11 +45,11 @@ pub unsafe trait Aligned: Sized {
 
     /// Borrows an unaligned type as an aligned value.
     ///
-    /// Returns `None` if `u` is not aligned.
+    /// Returns `None` if `unaligned` is not aligned.
     #[inline]
-    fn as_aligned(u: &Self::Unaligned) -> Option<&Self> {
-        if Self::is_aligned(u) {
-            Some(unsafe { Self::as_aligned_unchecked(u) })
+    fn from_unaligned_ref(unaligned: &Self::Unaligned) -> Option<&Self> {
+        if Self::is_aligned(unaligned) {
+            Some(unsafe { Self::from_unaligned_unchecked(unaligned) })
         } else {
             None
         }
@@ -58,11 +57,11 @@ pub unsafe trait Aligned: Sized {
 
     /// Mutably borrows an unaligned type as an aligned value.
     ///
-    /// Returns `None` if `u` is not aligned.
+    /// Returns `None` if `unaligned` is not aligned.
     #[inline]
-    unsafe fn as_aligned_mut(u: &mut Self::Unaligned) -> Option<&mut Self> {
-        if Self::is_aligned(u) {
-            Some(Self::as_aligned_mut_unchecked(u))
+    unsafe fn from_unaligned_mut(unaligned: &mut Self::Unaligned) -> Option<&mut Self> {
+        if Self::is_aligned(unaligned) {
+            Some(Self::from_unaligned_mut_unchecked(unaligned))
         } else {
             None
         }
@@ -72,33 +71,34 @@ pub unsafe trait Aligned: Sized {
     ///
     /// Causes undefined behaviour if used improprly!
     #[inline]
-    unsafe fn as_aligned_unchecked(u: &Self::Unaligned) -> &Self {
-        transmute(u)
+    unsafe fn from_unaligned_unchecked(unaligned: &Self::Unaligned) -> &Self {
+        transmute(unaligned)
     }
 
     /// Mutably borrows an unaligned type as an aligned value, without first checking the alignment.
     ///
     /// Causes undefined behaviour if used improprly!
     #[inline]
-    unsafe fn as_aligned_mut_unchecked(u: &mut Self::Unaligned) -> &mut Self {
-        transmute(u)
+    unsafe fn from_unaligned_mut_unchecked(unaligned: &mut Self::Unaligned) -> &mut Self {
+        transmute(unaligned)
     }
 
-    /// Converts a value to its unaligned representation.
+    /// Converts a value to its unaligned representation without dropping `self`.
     #[inline]
-    fn unaligned(self) -> Self::Unaligned {
+    fn into_unaligned(self) -> Self::Unaligned {
         unsafe {
-            let mut s: Self::Unaligned = uninitialized();
-            forget(replace(&mut s, *transmute::<_, &Self::Unaligned>(&self)));
-            s
+            let mut un: Self::Unaligned = uninitialized();
+            write(&mut un, *self.as_unaligned());
+            forget(self);
+            un
         }
     }
 
-    /// Copies a value from its unaligned representation.
+    /// Creates a value from its unaligned representation.
     #[inline]
     unsafe fn from_unaligned(u: Self::Unaligned) -> Self {
         let mut s: Self = uninitialized();
-        forget(replace(s.as_unaligned_mut(), u));
+        write(s.as_unaligned_mut(), u);
         s
     }
 
@@ -115,7 +115,7 @@ pub unsafe trait Packed: Unaligned {
     fn __assert_unaligned() { }
 }
 
-#[cfg(feature = "unstable")]
+#[cfg(feature = "oibit")]
 mod impls {
     use super::Unaligned;
 
@@ -139,7 +139,7 @@ mod impls {
     impl<'a, T> !Unaligned for &'a mut T { }
 }
 
-#[cfg(not(feature = "unstable"))]
+#[cfg(not(feature = "oibit"))]
 mod impls {
     use super::Unaligned;
 
@@ -226,7 +226,8 @@ mod impl64 {
     unsafe impl<'a, T: Sized> Aligned for &'a mut T { type Unaligned = [u8; 8]; }
 }
 
-//unsafe impl<T: Unaligned> Aligned for T { type Unaligned = T; }
+// TODO: why does this conflict?
+//unsafe impl<T: Unaligned + Sized + Copy> Aligned for T { type Unaligned = T; }
 
 unsafe impl Packed for () { }
 unsafe impl Packed for i8 { }
@@ -235,13 +236,16 @@ unsafe impl Packed for bool { }
 unsafe impl<T> Packed for PhantomData<T> { }
 
 macro_rules! packed_def {
-    (=> $($($x:ident),*;)*) => {
-        $(
-            unsafe impl<$($x: Unaligned),*> Unaligned for ($($x),*,) { }
+    (=> $id_0:ident) => {};
+    (=> $id_0:ident $(, $ids:ident)*) => {
+        packed_def! {
+            => $($ids),*
+        }
 
-            // TODO: The language probably doesn't guarantee ordering for tuples, even when all are 1-aligned, so this is incorrect?
-            unsafe impl<$($x: Unaligned),*> Packed for ($($x),*,) { }
-        )*
+        unsafe impl<$($ids: Unaligned),*> Unaligned for ($($ids),*,) { }
+
+        // TODO: The language probably doesn't guarantee ordering for tuples, even when all are 1-aligned, so this is incorrect?
+        unsafe impl<$($ids: Unaligned),*> Packed for ($($ids),*,) { }
     };
     ($($x:expr),*) => {
         $(
@@ -260,28 +264,18 @@ unsafe impl<T: Aligned> Aligned for [T; 1] {
     type Unaligned = T::Unaligned;
 }
 
-unsafe impl<T> Aligned for [T; 0] {
+unsafe impl<T: Aligned> Aligned for [T; 0] {
     type Unaligned = ();
 }
 
-packed_def! { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f }
-packed_def! { 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f }
-packed_def! { 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f }
-packed_def! { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f }
-packed_def! { 0x40 }
-packed_def! { =>
-    A;
-    A, B;
-    A, B, C;
-    A, B, C, D;
-    A, B, C, D, E;
-    A, B, C, D, E, F;
-    A, B, C, D, E, F, G;
-    A, B, C, D, E, F, G, H;
-    A, B, C, D, E, F, G, H, I;
-    A, B, C, D, E, F, G, H, I, J;
-    A, B, C, D, E, F, G, H, I, J, K;
+packed_def! {
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
+    0x40
 }
+packed_def! { => __, A, B, C, D, E, F, G, H, I, J, K }
 
 #[test]
 fn assert_packed() {
