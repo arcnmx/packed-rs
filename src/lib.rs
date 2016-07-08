@@ -5,7 +5,7 @@
 //!
 //! See `nue_macros` for the automagic `#[packed]` attribute.
 
-use std::mem::{transmute, uninitialized, forget, align_of};
+use std::mem::{transmute, uninitialized, forget, align_of, size_of};
 use std::ptr::write;
 use std::marker::PhantomData;
 
@@ -18,8 +18,23 @@ pub unsafe trait Unaligned { }
 /// A type alias that represents the unaligned type of `T`.
 pub type Un<T> = <T as Aligned>::Unaligned;
 
-/// A marker trait indicating that a type has an alignment greater than `1`,
-/// and is therefore not safe to use in an unaligned context.
+/// Determines whether a pointer or reference is correctly aligned for type `T`.
+pub fn is_aligned_for<T, U>(ptr: *const U) -> bool {
+    ptr as usize % align_of::<T>() == 0
+}
+
+/// Determines whether a slice is correctly aligned for type `T`.
+pub fn is_aligned_for_slice<T, U>(slice: &[U]) -> bool {
+    is_aligned_for::<T, _>(slice.as_ptr())
+}
+
+/// Calculates the total byte size of a slice.
+pub fn size_of_slice<T>(slice: &[T]) -> usize {
+    slice.len() * size_of::<T>()
+}
+
+/// A trait for converting types with alignments greater than `1`
+/// into their unaligned equivalent.
 pub unsafe trait Aligned: Sized {
     /// An unaligned representation of this type. Usually a u8 array of the
     /// same size.
@@ -28,7 +43,7 @@ pub unsafe trait Aligned: Sized {
     /// Determines whether an unaligned representation of this type is aligned.
     #[inline]
     fn is_aligned(unaligned: &Self::Unaligned) -> bool {
-        unaligned as *const _ as usize % align_of::<Self>() == 0
+        is_aligned_for::<Self, _>(unaligned)
     }
 
     /// Borrows the value as unaligned.
