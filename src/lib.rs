@@ -294,14 +294,39 @@ packed_def! {
 }
 packed_def! { => __, A, B, C, D, E, F, G, H, I, J, K }
 
-#[test]
-fn assert_packed() {
-    fn is<T: Packed>() { }
-    fn is_unaligned<T: Unaligned>() { }
+#[cfg(test)]
+mod test {
+    use super::*;
 
-    is::<()>();
-    is::<u8>();
-    is::<i8>();
-    is::<bool>();
-    is_unaligned::<(bool, u8)>();
+    #[test]
+    fn assert_packed() {
+        fn is<T: Packed>() { }
+        fn is_unaligned<T: Unaligned>() { }
+
+        is::<()>();
+        is::<u8>();
+        is::<i8>();
+        is::<bool>();
+        is_unaligned::<(bool, u8)>();
+    }
+
+    #[test]
+    fn unaligned_conversion() {
+        let f = 0.5f32;
+        let x = Aligned::into_unaligned(f);
+        assert!(<f32 as Aligned>::is_aligned(&x));
+        assert_eq!(&f, <f32 as Aligned>::from_unaligned_ref(&x).unwrap());
+    }
+
+    #[test]
+    fn pointer_alignment() {
+        use std::mem::align_of;
+
+        let f = 0.5f32;
+        assert!(is_aligned_for::<f32, _>(&f));
+        assert!(is_aligned_for::<u8, _>(&f));
+        if align_of::<f32>() > 1 {
+            assert!(!is_aligned_for::<f32, _>((&f as *const _ as usize + 1) as *const u8));
+        }
+    }
 }
