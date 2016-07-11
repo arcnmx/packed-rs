@@ -19,16 +19,19 @@ pub unsafe trait Unaligned { }
 pub type Un<T> = <T as Aligned>::Unaligned;
 
 /// Determines whether a pointer or reference is correctly aligned for type `T`.
+#[inline]
 pub fn is_aligned_for<T, U>(ptr: *const U) -> bool {
     ptr as usize % align_of::<T>() == 0
 }
 
 /// Determines whether a slice is correctly aligned for type `T`.
+#[inline]
 pub fn is_aligned_for_slice<T, U>(slice: &[U]) -> bool {
     is_aligned_for::<T, _>(slice.as_ptr())
 }
 
 /// Calculates the total byte size of a slice.
+#[inline]
 pub fn size_of_slice<T>(slice: &[T]) -> usize {
     slice.len() * size_of::<T>()
 }
