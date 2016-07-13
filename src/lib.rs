@@ -21,7 +21,8 @@ pub type Un<T> = <T as Aligned>::Unaligned;
 /// Determines whether a pointer or reference is correctly aligned for type `T`.
 #[inline]
 pub fn is_aligned_for<T, U>(ptr: *const U) -> bool {
-    ptr as usize % align_of::<T>() == 0
+    align_of::<U>() >= align_of::<T>() ||
+        ptr as usize % align_of::<T>() == 0
 }
 
 /// Determines whether a slice is correctly aligned for type `T`.
